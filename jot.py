@@ -115,3 +115,37 @@ def format_list_entry(filepath):
 
     heading = extract_heading(filepath)
     return f"{ts:%Y-%m-%d %H:%M:%S}    {heading}"
+
+
+# --- commands ---
+
+def cmd_add(args):
+    """Add a new note from args.text or stdin."""
+    ensure_dirs()
+    if args.text:
+        content = " ".join(args.text)
+    else:
+        if sys.stdin.isatty():
+            print("Error: no text provided and stdin is a terminal.", file=sys.stderr)
+            print("Usage: jot add 'note text'  OR  echo 'text' | jot add", file=sys.stderr)
+            sys.exit(1)
+        content = sys.stdin.read().strip()
+
+    if not content:
+        print("Error: note text cannot be empty.", file=sys.stderr)
+        sys.exit(1)
+
+    lines = content.split("\n", 1)
+    heading = lines[0].strip()
+    body = lines[1].strip() if len(lines) > 1 else ""
+
+    ts = datetime.datetime.now()
+    filename = generate_filename(heading, ts)
+    filepath = NOTES_DIR / filename
+
+    with open(filepath, "w") as f:
+        f.write(f"# {heading}\n")
+        if body:
+            f.write(f"\n{body}\n")
+
+    print(str(filepath))
