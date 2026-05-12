@@ -38,7 +38,7 @@ def generate_slug(text):
     joined = "-".join(words)
 
     # Strip non-alphanumeric (keep hyphens), collapse multiple hyphens
-    slug = re.sub(r"[^a-z0-9-]", "", joined)
+    slug = re.sub(r"[^\w-]", "", joined)
     slug = re.sub(r"-+", "-", slug)
     slug = slug.strip("-")
 
@@ -108,7 +108,7 @@ def format_list_entry(filepath):
     # Parse timestamp from filename: YYYY-MM-DD-HHMMSS-slug.md
     name = filepath.name
     try:
-        prefix = name[:19]  # '2026-05-12-230500'
+        prefix = name[:17]  # '2026-05-12-230500'
         ts = datetime.datetime.strptime(prefix, "%Y-%m-%d-%H%M%S")
     except (ValueError, IndexError):
         return f"{name}    (unknown date)"
