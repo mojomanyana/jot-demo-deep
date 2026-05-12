@@ -159,3 +159,21 @@ def cmd_list(args):
         print(format_list_entry(fp))
     if not files:
         print("No notes yet. Add one with: jot add 'your note'")
+
+
+def cmd_search(args):
+    """Search notes with ripgrep."""
+    ensure_dirs()
+    if args.tag:
+        pattern = f"#{args.tag}"
+    elif args.query:
+        pattern = args.query
+    else:
+        print("Error: provide a search query or --tag.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        subprocess.run(["rg", pattern, str(NOTES_DIR)])
+    except FileNotFoundError:
+        print("Error: 'rg' (ripgrep) not found. Install it: https://github.com/BurntSushi/ripgrep", file=sys.stderr)
+        sys.exit(1)

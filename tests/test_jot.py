@@ -289,5 +289,55 @@ class CmdListTests(unittest.TestCase):
         self.assertIn("No notes yet", output)
 
 
+class CmdSearchTests(unittest.TestCase):
+    """Tests for cmd_search()."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmpdir.name)
+        self.notes = self.tmp_path / "notes"
+        self.attachments = self.tmp_path / "attachments"
+        self.notes.mkdir(parents=True, exist_ok=True)
+        self.attachments.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def _args(self, query=None, tag=None):
+        class FakeArgs:
+            pass
+        a = FakeArgs()
+        a.query = query
+        a.tag = tag
+        return a
+
+    def test_search_calls_rg(self):
+        with patch("jot.NOTES_DIR", self.notes), patch("jot.ATTACHMENTS_DIR", self.attachments), \
+             patch("jot.subprocess.run") as mock_run:
+            jot.cmd_search(self._args(query="hello"))
+
+        mock_run.assert_called_once_with(["rg", "hello", str(self.notes)])
+
+    def test_search_tag_calls_rg(self):
+        with patch("jot.NOTES_DIR", self.notes), patch("jot.ATTACHMENTS_DIR", self.attachments), \
+             patch("jot.subprocess.run") as mock_run:
+            jot.cmd_search(self._args(tag="meeting"))
+
+        mock_run.assert_called_once_with(["rg", "#meeting", str(self.notes)])
+
+    def test_search_no_rg_errors(self):
+        with patch("jot.NOTES_DIR", self.notes), patch("jot.ATTACHMENTS_DIR", self.attachments), \
+             patch("jot.subprocess.run", side_effect=FileNotFoundError):
+            with self.assertRaises(SystemExit) as cm:
+                jot.cmd_search(self._args(query="hello"))
+            self.assertEqual(cm.exception.code, 1)
+
+    def test_search_no_query_errors(self):
+        with patch("jot.NOTES_DIR", self.notes), patch("jot.ATTACHMENTS_DIR", self.attachments):
+            with self.assertRaises(SystemExit) as cm:
+                jot.cmd_search(self._args())  # no query, no tag
+            self.assertEqual(cm.exception.code, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
