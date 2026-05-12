@@ -339,5 +339,36 @@ class CmdSearchTests(unittest.TestCase):
             self.assertEqual(cm.exception.code, 1)
 
 
+class FullIntegrationTests(unittest.TestCase):
+    """End-to-end integration tests combining add and list."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmpdir.name)
+        self.notes = self.tmp_path / "notes"
+        self.attachments = self.tmp_path / "attachments"
+        self.notes.mkdir(parents=True, exist_ok=True)
+        self.attachments.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_full_add_then_list(self):
+        class AddArgs:
+            text = ["hello from integration test"]
+        class ListArgs:
+            count = 10
+
+        with patch("jot.NOTES_DIR", self.notes), patch("jot.ATTACHMENTS_DIR", self.attachments):
+            # Add a note
+            jot.cmd_add(AddArgs())
+            # List should show it
+            with patch("sys.stdout", new_callable=io.StringIO) as fake_out:
+                jot.cmd_list(ListArgs())
+                output = fake_out.getvalue()
+
+        self.assertIn("hello from integration test", output)
+
+
 if __name__ == "__main__":
     unittest.main()

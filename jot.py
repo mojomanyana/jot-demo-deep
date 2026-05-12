@@ -3,12 +3,9 @@
 
 import argparse
 import datetime
-import os
 import re
-import shutil
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
 JOT_DIR = Path.home() / ".jot"
@@ -177,3 +174,43 @@ def cmd_search(args):
     except FileNotFoundError:
         print("Error: 'rg' (ripgrep) not found. Install it: https://github.com/BurntSushi/ripgrep", file=sys.stderr)
         sys.exit(1)
+
+
+# --- entry point ---
+
+
+def build_parser():
+    """Build the argparse parser with subcommands."""
+    parser = argparse.ArgumentParser(
+        description="jot — quick notes from the command line. Store notes in ~/.jot/notes/."
+    )
+    subs = parser.add_subparsers(dest="command")
+
+    add_p = subs.add_parser("add", help="Add a new note")
+    add_p.add_argument("text", nargs="*", help="Note text (reads from stdin if omitted)")
+    add_p.set_defaults(func=cmd_add)
+
+    list_p = subs.add_parser("list", help="List recent notes")
+    list_p.add_argument("-n", "--count", type=int, default=10, help="Number of notes to show (default: 10)")
+    list_p.set_defaults(func=cmd_list)
+
+    search_p = subs.add_parser("search", help="Search notes with ripgrep")
+    search_p.add_argument("query", nargs="?", default=None, help="Search query")
+    search_p.add_argument("--tag", "-t", default=None, help="Search for #tag")
+    search_p.set_defaults(func=cmd_search)
+
+    return parser
+
+
+def main():
+    """Main entry point. Dispatch to the appropriate subcommand."""
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        sys.exit(0)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
