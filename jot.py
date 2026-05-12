@@ -149,3 +149,13 @@ def cmd_add(args):
             f.write(f"\n{body}\n")
 
     print(str(filepath))
+
+
+def cmd_list(args):
+    """List recent notes, newest first."""
+    ensure_dirs()
+    files = sorted(NOTES_DIR.glob("*.md"), reverse=True)
+    for fp in files[:args.count]:
+        print(format_list_entry(fp))
+    if not files:
+        print("No notes yet. Add one with: jot add 'your note'")

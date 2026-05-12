@@ -220,5 +220,74 @@ class CmdAddTests(unittest.TestCase):
             self.assertEqual(cm.exception.code, 1)
 
 
+class CmdListTests(unittest.TestCase):
+    """Tests for cmd_list()."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmpdir.name)
+        self.notes = self.tmp_path / "notes"
+        self.attachments = self.tmp_path / "attachments"
+        self.notes.mkdir(parents=True, exist_ok=True)
+        self.attachments.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def _args(self, count=10):
+        class FakeArgs:
+            pass
+        a = FakeArgs()
+        a.count = count
+        return a
+
+    def _create_notes(self, timestamps):
+        """Create note files with given timestamps (list of (YYYYMMDD_HHMM, heading))."""
+        for ts_str, heading in timestamps:
+            filename = f"{ts_str}-{jot.generate_slug(heading)}.md"
+            fp = self.notes / filename
+            fp.write_text(f"# {heading}\n")
+
+    def test_list_shows_recent(self):
+        notes_data = [
+            ("2026-05-12-230000", "third note"),
+            ("2026-05-12-220000", "second note"),
+            ("2026-05-12-210000", "first note"),
+        ]
+        self._create_notes(notes_data)
+
+        with patch("jot.NOTES_DIR", self.notes), patch("jot.ATTACHMENTS_DIR", self.attachments), \
+             patch("sys.stdout", new_callable=io.StringIO) as fake_out:
+            jot.cmd_list(self._args())
+            output = fake_out.getvalue()
+
+        lines = [l for l in output.strip().split("\n") if l]
+        self.assertEqual(len(lines), 3)
+        # Newest first
+        self.assertIn("third note", lines[0])
+        self.assertIn("first note", lines[2])
+
+    def test_list_respects_count(self):
+        notes_data = [(f"2026-05-12-{i:02d}0000", f"note {i}") for i in range(1, 21)]
+        notes_data.reverse()
+        self._create_notes(notes_data)
+
+        with patch("jot.NOTES_DIR", self.notes), patch("jot.ATTACHMENTS_DIR", self.attachments), \
+             patch("sys.stdout", new_callable=io.StringIO) as fake_out:
+            jot.cmd_list(self._args(count=5))
+            output = fake_out.getvalue()
+
+        lines = [l for l in output.strip().split("\n") if l]
+        self.assertEqual(len(lines), 5)
+
+    def test_list_empty_shows_message(self):
+        with patch("jot.NOTES_DIR", self.notes), patch("jot.ATTACHMENTS_DIR", self.attachments), \
+             patch("sys.stdout", new_callable=io.StringIO) as fake_out:
+            jot.cmd_list(self._args())
+            output = fake_out.getvalue()
+
+        self.assertIn("No notes yet", output)
+
+
 if __name__ == "__main__":
     unittest.main()
