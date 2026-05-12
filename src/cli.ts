@@ -9,7 +9,7 @@ async function main(): Promise<void> {
 
   switch (command) {
     case 'add': {
-      if (!text) {
+      if (text === undefined) {
         console.error('Usage: jot add <text>');
         process.exit(1);
       }
