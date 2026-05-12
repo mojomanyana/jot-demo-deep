@@ -1,7 +1,7 @@
-# Decision Brief: jot — CLI quick-notes tool
+# Decision Brief: jot — Quick-note CLI tool
 
-**Date:** 2026-05-12
-**Session mode:** A — Problem Exploration (full Diamond)
+**Date:** 2026-05-13
+**Session mode:** A (Problem exploration)
 **Status:** Decided
 
 ---
@@ -9,92 +9,96 @@
 ## 1. The question, reframed
 
 **What we set out to ask:**
-> "I want to build a CLI tool for quick notes. Something like `jot add 'remember thing'` and `jot list`. Help me think through the design before I commit to anything."
+> "I want to build a CLI tool for quick notes. Something like `jot add 'remember thing'` and `jot list`. Simple, TypeScript, quality code."
 
 **What we actually decided we were asking:**
-> "I lose transient thoughts because the cost of capturing them exceeds my willingness to pay in the moment. When I do capture, they scatter across tools and surfaces. How do I build a single, instant, minimal capture point that accepts anything I throw at it and gets out of my way?"
+> "How do I build a globally-installable CLI that captures quick todo notes so they survive terminal sessions, with well-crafted TypeScript code as the primary deliverable quality?"
 
 **Why the reframe matters:**
-The original framing jumped to a solution (`jot add` / `jot list`) and surface-level implementation questions (storage, search). The real problem is *capture friction* — the activation energy required to dump a thought before it evaporates. The tool exists to make that number as close to zero as possible, not to be a note-taking app.
+The original framing was already close — the main addition was surfacing "global install" and "survives terminal sessions" as hard constraints, and making explicit that "quality" means code quality (structure, types, tests), not persistence guarantees.
 
 ---
 
 ## 2. Constraints and assumptions
 
 **Hard constraints:**
-- CLI-first. Must work from any terminal, with minimal keystrokes.
-- Heterogeneous capture: text, URLs, command snippets, filenames, file attachments — not all the same shape.
-- Standalone CLI now; must be usable as a pi extension later.
-- Personal tool — single user, single machine. No sync, no multi-tenancy, no auth.
-- Minimal. Not a product. Not a knowledge base. Not a "second brain."
+- Global install — invocable as `jot add "..."` and `jot list` from any directory
+- Survives terminal sessions — notes aren't lost when the terminal closes
+- TypeScript with well-structured code
+- Core commands: `add` and `list`
 
 **Soft constraints:**
-- Capture should feel instant — sub-second, no friction loops.
-- Retrieval should be dead-simple. No query language, no schema to learn.
-- Each note should be independently addressable (edit, delete, share one note without touching others).
+- Single machine, single user
+- Minimal dependencies
+- Fast to type — friction must be negligible or the tool won't be used
 
-**Explicit non-constraints (we chose not to be limited by):**
-- **No need to build search infrastructure upfront.** `rg`/`grep` is sufficient until it demonstrably isn't. Lifted because over-indexing on search would compromise minimalism.
-- **No cross-platform portability burden.** Runs where the user runs (Linux/macOS). No Windows support needed.
-- **No structured schema enforcement.** Notes are freeform. Conventions can emerge, but the tool doesn't enforce them.
+**Explicit non-constraints:**
+- Long-term persistence — notes are disposable scratchpad items, no backup/sync needed
+- Multi-user, multi-machine, cloud sync
+- Rich formatting, search, categories, tags
 
-**Assumptions we made:**
-- `rg` (ripgrep) is available and sufficient for retrieval on a personal scale (hundreds to low thousands of notes) — *unverified, will be discovered in practice.*
-- The file-per-note model scales acceptably for personal use — *unverified; pre-mortem addresses the failure mode.*
-- User is comfortable with the filesystem as a database — *verified* (CLI-native user).
+**Assumptions made:**
+- Single-user, single-terminal-at-a-time concurrency is acceptable — verified (user said "just for you")
+- JSON file in home directory is acceptable for storage — unverified; worth confirming during implementation
+- Node.js and npm are available globally on the target machine — verified (user is in a Node/TS dev environment)
 
 ---
 
 ## 3. Options considered
 
-| # | Option | One-line | Pros | Cons | Reversibility |
-|---|--------|----------|------|------|---------------|
-| A | Shell alias | `alias jot='echo "$(date) $*" >> ~/jot.txt'` | Zero dependencies, done in seconds | No search, no attachments, no structure | Two-way |
-| B | Single flat text file | One `notes.txt`, thin CLI wrapper | Dead simple, grep-able, single file | No metadata, no per-note addressing | Two-way |
-| C | JSONL with tags | One `notes.jsonl`, `jq`-able, substring search | Structured, scriptable, single file, tags built in | Not per-note addressable, attachments as dead strings, git diffs are line-level in a giant file | Two-way |
-| **D** | **Directory of markdown files** | **Each note is `~/.jot/YYYY-MM-DD-HHMMSS-slug.md`** | **Git-friendly, per-note addressing, attachments as siblings, filesystem-is-the-DB, rg search** | **Directory explosion at scale, no ranked search, inconsistent formatting without discipline, "what was the slug?" retrieval friction** | **Two-way** |
-| E | SQLite + FTS5 | Single `.db`, ranked full-text search | Real search, fast, metadata-rich | Not grep-able, schema to maintain, more code, less Unix-native | Two-way |
-| F | Pipe-native, stdin-first | `echo "thought" \| jot`, output designed for piping | Maximally Unix-composable | Attachments awkward, no per-note file identity | Two-way |
+| # | Option | One-line description | Pros | Cons | Reversibility |
+|---|--------|----------------------|------|------|---------------|
+| 1 | Shell aliases | `alias jot-add='echo "..." >> ~/.jot.txt'` | Zero code, zero deps, already global | No structure, no types, no quality — undermines the goal | Two-way |
+| 2 | Single-file script | One `index.ts`, JSON file, `process.argv` parsing | Fast to build, minimal structure | No tests, harder to extend, lower code quality | Two-way |
+| 3 | Multi-file TS project with tests | Full project: `src/cli.ts`, `src/store.ts`, `src/commands.ts`, tests | Code quality first, typed, tested, maintainable | More upfront time, risk of over-engineering for scope | Two-way |
+| 4 | In-memory daemon | Background process, Unix socket/HTTP | Survives terminal sessions, zero files | Over-engineered, daemon management complexity | Two-way |
+| 5 | SQLite store | Option 3 but with SQLite backend | Structured queries, timestamps built-in | Native dependency, database overhead for a scratchpad | Two-way |
+| 6 (do nothing) | Status quo | Keep typing notes into terminal prompts and losing them | Zero effort | Still losing notes | n/a |
 
-**Options the user had already rejected before the session:**
-- Todo apps / GUI note apps — too structured, imposed a task/project model that fights "just remember this."
-- Scattered ad-hoc capture (browser tabs, Slack DMs to self, random text files) — this is the status quo that's failing.
+**Options the user had already rejected before the session, and why:**
+- Long-term persistence / database-heavy solutions — implicitly rejected by "no long term persistence"
+- Complex feature sets (sync, categories, multi-user) — rejected by "simple"
 
-**Steel-man of the strongest rejected option (Option C — JSONL):**
-> A single JSONL file is easier to back up, easier to pipe through `jq` for filtering, and avoids directory explosion entirely. A pi extension reads one file. The attachment problem (path strings divorced from notes) could be solved by copying files into a managed directory and referencing them by hash or UUID. The git-diff concern is real but manageable if notes are mostly appended. If Option D fails on *scale* or *search*, Option C is the first fallback — not E (SQLite), because C keeps the Unix-philosophy simplicity while adding just enough structure.
+**Steel-man of the strongest rejected option:**
+> Option 2 (single-file script) is the pragmatic choice: you get a working tool in 30 minutes, it's globally installable, it does the job, and you haven't spent a day setting up a project scaffold for what's fundamentally a JSON append. The risk of over-engineering is real — the best tool is the one that exists.
 
 ---
 
 ## 4. Pre-mortem on the chosen path
 
-> *Imagine it's 12 months later. Option D failed. The story is:*
-
-You have ~1,500 notes in a flat directory. `rg` searches take a noticeable beat. You search for "docker networking issue" and get 40 results — no ranking, no fuzzy matching — and the one you want is result #17. You misspelled "database" as "databse" and got zero results. You've stopped trusting retrieval, so you don't bother searching anymore. Notes accumulate but you never revisit them. The tool became a write-only sink.
-
-Meanwhile, `~/.jot/` is cluttered with 200 `.png` screenshots and `.pdf` attachments mixed among `.md` files with no separation. Half your notes have YAML frontmatter, half don't. Some use `#tag` in the body, some use frontmatter `tags: [...]`. You can't remember which convention a given note uses, so filtering is unreliable. You drift back to todo apps for anything you actually need to find later.
+> _Imagine it's 6 months later. `jot` sits unused in `/usr/local/lib/node_modules`. The story is:_
 
 **Top failure modes:**
 
-| # | Mode | Likelihood × Severity | Mitigation or acceptance |
-|---|------|----------------------|--------------------------|
-| 1 | **Directory scalability** — `rg` becomes slow with 1,000+ files; no ranked/fuzzy search | Medium × Medium | Acceptance for now. If it bites, migrate to Option C or add a lightweight SQLite search index that references file paths. Two-way door. |
-| 2 | **Inconsistent formatting** — notes diverge without enforced conventions | High × Low | Mitigation: establish a minimal frontmatter convention in the implementation spec and stick to it from day one. The CLI generates the template; the user rarely writes raw markdown by hand. |
-| 3 | **Attachment clutter** — flat directory mixes `.md` with `.png`, `.pdf`, etc. | High × Low | Mitigation: use a `notes/` + `attachments/` subdirectory structure from the start. The CLI places attachments in `attachments/` and references them relatively. |
-| 4 | **"What was the slug?"** — timestamp-based filenames make retrieval by memory harder | Medium × Medium | Mitigation: `jot list` shows recent notes with their content summaries, not just filenames. `jot search` (backed by `rg`) searches content, not filenames. The slug is an optimization for the filesystem, not for the user. |
+1. **JSON file corruption from concurrent writes** — Two terminal tabs write simultaneously, the JSON array structure breaks, notes are lost.
+   - Likelihood: Medium × Severity: High
+   - Mitigation: Use JSON Lines (append-only, one JSON object per line) instead of a single JSON array. Each write is one atomic `fs.appendFile` call. No parsing required for reads — read lines, parse each.
+
+2. **Over-engineering kills momentum** — Two days spent on project scaffold, testing infrastructure, linting config before a single note is stored.
+   - Likelihood: Medium × Severity: Medium
+   - Mitigation: Build the working MVP (add + list against a temp file) in one sitting first. Add tests, polish, and structure on the second pass. Ship before you perfect.
+
+3. **nvm Node version switch nukes the global install** — `npm install -g` is per-Node-version with nvm. Switching versions loses the binary.
+   - Likelihood: Medium × Severity: Low (reinstall is one command)
+   - Mitigation: Document the install command in the README. Alternatively, use a local clone + `npm link`, or install to a stable system Node outside nvm.
+
+4. **The habit doesn't form** — `echo >> file` is just as fast and already muscle memory.
+   - Likelihood: Low × Severity: Medium (the tool worked but isn't used)
+   - Mitigation: `jot add "milk"` is actually fewer characters than `echo "milk" >> ~/notes` and you don't need to remember the file path. This might not be a real problem.
 
 ---
 
 ## 5. Decision
 
-**The decision:** Store notes as individual timestamped markdown files in a `~/.jot/` directory, with a `notes/` subdirectory for content and an `attachments/` subdirectory for attached files.
+**The decision:** Build a multi-file TypeScript CLI project with JSON Lines storage in `~/.jot/notes.jsonl`, core commands `add` and `list`, with tests, following a quality-first code structure.
 
-**Decision rule used:** The most Unix-native, git-friendly, and independently-addressable option that requires no dependencies beyond what ships on a developer machine.
+**Decision rule used:** Best fit to constraints — Options 1 and 2 fail the "code quality/types" constraint, Options 4 and 5 fail "simple," and Option 3 is the one choice that satisfies all hard constraints.
 
-**Why this option, in one paragraph:**
-Each note is a file. That means each note can be edited, deleted, shared, or committed to git independently — no database to corrupt, no schema to migrate, no lock-in. `rg` is fast enough for personal scale. The filesystem is the database, and that keeps the tool honest: `jot` is a convenience layer, not a platform. If it ever isn't enough, migrating to JSONL or SQLite is a one-time script.
+**Why this option:**
+Option 3 is the only option that delivers on the stated priority (code quality, types, tests) without introducing unnecessary infrastructure (daemon, database). The JSON Lines storage pattern (one JSON object per line, append-only) eliminates the concurrent-write corruption risk identified in the pre-mortem while keeping the storage dead simple — a file you can `cat` and read with your eyes.
 
 **What we're explicitly trading away:**
-> We're giving up **ranked full-text search and structured metadata** to get **filesystem-native simplicity, git-friendliness, and per-note independence**. The bet is that for one person's transient thoughts, `rg` is enough and the filesystem-as-DB is a feature, not a limitation.
+> We're trading development speed and minimalism for code quality and testability. A single-file script would be working sooner; this approach buys a codebase you'd be proud to reference or extend later.
 
 ---
 
@@ -102,54 +106,50 @@ Each note is a file. That means each note can be edited, deleted, shared, or com
 
 **Classification:** Two-way door
 
-**Reversal trigger:** Retrieval becomes unreliable — searches take >1 second, or you regularly fail to find notes you know exist.
+**How to reverse:**
+- `npm uninstall -g jot` to remove the binary
+- Delete `~/.jot/` to remove all notes
+- Total cost to reverse: under 10 seconds, zero data contract breakage
 
-**Reversal mechanism:** Write a migration script that iterates `~/.jot/notes/*.md`, extracts content + timestamp + tags into a JSONL file or SQLite DB, and optionally rebuilds the file tree from the new store. The CLI interface (`jot add`, `jot list`, `jot search`) doesn't change — only the storage backend. Estimated migration effort: <1 hour.
-
-**Secondary trigger:** The directory exceeds ~2,000 files and filesystem operations become noticeably slow. Same reversal mechanism.
+**Trigger for reversal:** The tool sits unused for 2+ weeks, or the install/friction story is annoying enough that it's not worth keeping.
 
 ---
 
 ## 7. Open questions
 
-Deliberately not decided — to be addressed in implementation planning or first-use discovery:
+Things deliberately not decided in this session:
 
-- **Subdirectory layout:** `~/.jot/notes/` + `~/.jot/attachments/` is the working assumption, but `~/.jot/` flat directory is simpler. Decide during implementation based on first-use feel. *(Resolve at tech-lead / coding spec phase.)*
-- **Frontmatter convention:** YAML frontmatter with `tags`, `created`, `modified`? Or just a `# title` and body? The pre-mortem says consistency matters — pick one and enforce it. *(Resolve at tech-lead phase.)*
-- **Filename format:** ISO timestamp + slug (`2026-05-12-143022-meeting-notes.md`) vs just slug (`meeting-notes.md`) with timestamp in frontmatter? Timestamp-first ensures sortability but costs readability. *(Resolve at tech-lead phase.)*
-- **`jot edit` command?** Should `jot edit <slug>` open the file in `$EDITOR`, or is `jot` a capture-only tool and editing happens via the filesystem? The current scope is capture + list (+ search via rg), but edit is a natural extension. *(Defer to v2 unless it's trivial to add.)*
-- **Pi extension integration pattern:** Should the pi extension call the CLI as a subprocess, or read/write `.md` files directly? Depends on pi's extension API. *(Resolve when pi extension work begins.)*
+- **Should there be a `delete` or `clear` command?** — Ship `add` and `list` first. Add `clear` if the JSONL file gets noisy. `delete` by index is a nice-to-have that can come later.
+- **Should notes have timestamps?** — JSONL makes it trivial to add `{ text, ts }` per entry. Worth doing from the start for `list` ordering, but it's a one-field addition so it's a low-cost decision.
+- **Exact project structure?** — Defer to `tech-lead` skill which will design the file layout, interfaces, and test strategy.
 
 ---
 
 ## 8. Handoff
 
-**The next step is owned by:** `tech-lead` skill — this is a small, single-slice implementation that needs a coding spec before keystrokes.
+**The next step is owned by:** `tech-lead` skill
 
-> Hand off to `tech-lead` skill. Key inputs:
-> - **Decision:** Directory of timestamped markdown files (`~/.jot/`)
-> - **Command surface:** `jot add "text"`, `jot list`, `jot search "query"` (wrapping `rg`), optional `jot attach <file>` as v1 or v1.1
-> - **Acceptance criteria:** Capture is sub-second. List shows recent notes with summaries. Search finds notes by content.
-> - **Open questions to resolve:** subdirectory layout, frontmatter convention, filename format, `jot edit` scope.
-> - **Store location:** `~/.jot/`
-
-**Do NOT invoke tech-lead from this session.** The user runs the next skill. This brief is the handoff package.
+Hand off to `tech-lead` skill. Key inputs:
+- Decision: Multi-file TypeScript CLI, JSON Lines storage at `~/.jot/notes.jsonl`
+- Acceptance criteria: `jot add "text"` (global), `jot list` (global), survives terminal sessions, typed, tested
+- Key design decision from pre-mortem: Use JSON Lines (append-only) instead of a JSON array to prevent concurrent-write corruption
+- Constraints: global install, minimal deps, simple interface
 
 ---
 
 ## 9. Session notes
 
-- **Bias caught:** The user initially framed this as a "CLI tool with commands" question — solution-side thinking. Rewinding to capture friction as the real problem unlocked the right design space.
-- **Useful analogy:** "Filesystem-is-the-DB" emerged as the organizing principle. The tool is a convenience layer, not a platform — this constraint held throughout and eliminated options E and F cleanly.
-- **Thing to remember when revisiting:** The user said "all of the above" to both "what happens when you don't capture" and "what shapes are the notes." That heterogeneity is the design challenge — the tool must accept anything without ceremony.
+- The user's actual pain point is typing notes into terminal prompts that vanish — not a missing note-taking system per se, but the gap between "terminal thought" and "captured."
+- "Quality" was clarified to mean code quality (structure, types, tests), not data durability.
+- JSON Lines was surfaced as the key architectural insight during the pre-mortem — it solves the biggest risk (corruption) with no added complexity.
 
 ---
 
 ## 10. Self-check
 
-- [x] At least 3 options were considered (6 options, including shell alias / do-nothing).
-- [x] The chosen option survived a real pre-mortem (4 failure modes, 2 mitigated, 2 accepted with reversal triggers).
-- [x] Reversibility is named (two-way door; migration script; specific triggers).
-- [x] The trade-off is named ("giving up ranked full-text search and structured metadata to get filesystem-native simplicity, git-friendliness, and per-note independence").
-- [x] The handoff points to a specific next step (tech-lead skill, with specific inputs).
-- [x] The user agreed with the reframing (confirmed by "go on" through all four Diamond phases).
+- [x] At least 3 options were considered (6, including "do nothing" and the boring option).
+- [x] The chosen option survived a real pre-mortem (4 failure modes identified, #1 has a concrete mitigation).
+- [x] Reversibility is named (two-way door, trivial to reverse).
+- [x] The trade-off is named ("speed/minimalism for code quality/testability").
+- [x] The handoff points to a specific next step (`tech-lead` skill, with concrete inputs).
+- [x] The user agreed with the reframing (chose Option 3 from the roster).

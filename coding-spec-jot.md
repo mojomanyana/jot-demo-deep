@@ -1,15 +1,15 @@
-# Coding Spec — jot v1: CLI quick-notes tool
+# Coding Spec — `jot` CLI quick-note tool
 
-**Status:** draft
-**Spec author:** tech-lead (date: 2026-05-12)
-**Upstream:** decision brief `/home/alavanja/prepos/jot-demo-deep/decision-brief-jot.md`
+**Status:** reviewed
+**Spec author:** tech-lead (date: 2026-05-13)
+**Upstream:** decision-brief-jot.md (brainstorming session, 2026-05-13)
 **Downstream:** coder
 
 ---
 
 ## 1. Outcome
 
-A single-file Python CLI (`jot`) with three subcommands — `add`, `list`, `search` — that stores each note as an individual timestamped markdown file in `~/.jot/notes/`. Zero dependencies. Install by copying `jot.py` to PATH. WHEN the user runs `jot add "text"`, the system shall create a new markdown file in `~/.jot/notes/` with a sortable timestamp-slug filename and a `# heading` as its first line. WHEN the user runs `jot list`, the system shall display the 10 most recent notes with timestamps and headings. WHEN the user runs `jot search "query"`, the system shall shell out to `rg` over the notes directory.
+`jot add "text"` appends a timestamped note to `~/.jot/notes.jsonl`. `jot list` prints all notes as `[HH:MM] text`, one per line. The tool is globally installable via `npm install -g`, ships zero runtime dependencies, and has full unit + integration test coverage.
 
 ---
 
@@ -17,329 +17,395 @@ A single-file Python CLI (`jot`) with three subcommands — `add`, `list`, `sear
 
 **In scope:**
 
-- `jot add "note text"` — positional args as note content
-- `jot add` (no args) — reads note from stdin
-- `jot list` — last 10 notes (filename + heading)
-- `jot list -n N` — last N notes
-- `jot search "query"` — wraps `rg "query" ~/.jot/notes/`
-- `jot search --tag tagname` — wraps `rg '#tagname' ~/.jot/notes/`
-- Auto-creates `~/.jot/notes/` and `~/.jot/attachments/` on first use
-- Slug generation from note text (kebab-case, first ~5 words, max 60 chars)
-- Timestamp embedded in filename (`YYYY-MM-DD-HHMMSS`)
-- Help text via `--help` (provided by argparse)
+- `jot add "note text"` — append a note
+- `jot list` — list all notes with timestamps
+- `jot` (no args) — print usage
+- Unknown command — print usage with non-zero exit
+- JSON Lines storage at `~/.jot/notes.jsonl`
+- Timestamps on every note (ISO 8601, displayed as `HH:MM`)
+- Global npm install (`bin` in package.json → compiled JS)
+- Unit tests for the store module
+- Integration tests spawning the CLI process
+- `JOT_HOME` env var to override storage directory (for testing)
 
 **Out of scope (explicitly considered):**
 
-- `jot edit` — deferred to v2 (edit via filesystem directly in v1)
-- `jot delete` — deferred to v2 (delete via `rm` in v1)
-- `jot attach <file>` — deferred to v1.1 (dir exists, command not yet wired)
-- YAML frontmatter — deferred (decision: `# heading` as first line is sufficient)
-- Config file, env vars for customization
-- Piping `jot list` output to `fzf` (works naturally; no special support needed)
-- Colored output, fancy formatting (plain text, scannable)
-- Any dependency outside Python stdlib (not even `pytest`)
-- pi extension integration (separate future workstream)
+- `jot delete`, `jot clear`, `jot edit` — add later if needed
+- Search / filter — add later if needed
+- Categories, tags, priorities — not a task manager
+- Multiple named note files — single scratchpad only
+- Config file / `jot config` — unnecessary for 2-command tool
+- Piping / stdin input — `jot add "text"` covers the use case
+- Daemon / background process — JSON file on disk survives terminal sessions
+- Publishing to npm registry — user installs from local repo
 
 ---
 
 ## 3. Exploration notes
 
-**Surface:** Greenfield project. Python 3.12.3 available (`/usr/bin/python3`). Node v24.14.0 available but not used. `rg` 15.1.0 available (`/home/alavanja/.pi/agent/bin/rg`). Bash shell. No existing code, no build system, no config files, no git history. Empty repo except for the decision brief.
+**Surface:** Greenfield project. Empty repository except for `decision-brief-jot.md`. No existing code, conventions, or tests. All conventions are established by this spec.
 
 **Affected files:**
-- `jot.py` — new (the entire application; single file)
-- `tests/__init__.py` — new (empty, package marker)
-- `tests/test_jot.py` — new (all tests)
+- `src/types.ts` — new
+- `src/store.ts` — new
+- `src/cli.ts` — new
+- `tests/store.test.ts` — new
+- `tests/cli.test.ts` — new
+- `package.json` — new
+- `tsconfig.json` — new
 
-**Conventions discovered (none — greenfield; conventions established by this spec):**
+**Conventions established:**
 
 | Domain | Convention | Source |
 |---|---|---|
-| Naming | `snake_case` functions, `UPPER_CASE` constants | Python stdlib convention; this spec establishes |
-| Errors | `print(msg, file=sys.stderr)` + `sys.exit(1)` for user/system errors | Standard CLI convention |
-| Tests | `unittest` (stdlib), `tests/` directory, `test_*.py` naming | This spec establishes |
-| Types | No type annotations in v1 (keeps it simple; add later if desired) | Deliberate omission for minimalism |
-| Imports | Stdlib only: `argparse`, `pathlib`, `subprocess`, `datetime`, `re`, `sys`, `os`, `textwrap`, `shutil` | Zero-dependency constraint |
-| CLI | `argparse` with subcommands (`add`, `list`, `search`) | Stdlib pattern |
-| Docstrings | One-line module docstring; no per-function docstrings (code is short enough) | Minimalism |
+| Naming | camelCase functions, PascalCase types/interfaces | This spec |
+| Errors | Explicit error handling — store functions throw on IO errors caught by CLI; CLI returns non-zero exit codes | This spec |
+| Tests | vitest, colocated in `tests/` directory, named `*.test.ts` | This spec |
+| Types | tsconfig strict mode, explicit return types on public functions | This spec |
+| Imports | No path aliases (small project); relative imports | This spec |
+| Logging | stdout for list output, stderr for errors/usage | This spec |
+| Formatter / lint | None specified (user didn't request; can add later) | This spec |
 
 **Types & contracts:**
 
-```python
-# jot.py — no types, but the data contract:
+```typescript
+// src/types.ts
 
-# File path pattern:
-#   ~/.jot/notes/YYYY-MM-DD-HHMMSS-slug.md
-#   ~/.jot/attachments/  (empty dir in v1)
-
-# File format:
-#   # <heading — first line of user input>
-#
-#   <body — remaining lines, if any>
-
-# list output format (tab-separated for alignment):
-#   2026-05-12 23:05:00    docker-networking-issue
-#   2026-05-12 23:00:00    remember thing
-
-# search output: raw rg output, forwarded to stdout/sterr
+export interface Note {
+  /** The note content — user-provided text. May be empty string. */
+  text: string;
+  /** ISO 8601 timestamp of when the note was created. */
+  ts: string;
+}
 ```
 
-**Tests baseline:** No tests exist (greenfield). Baseline is `python3 -m unittest discover tests` with zero tests.
+```typescript
+// src/store.ts — public surface
+
+/** Append a note to the JSONL file. Creates directory + file if needed. */
+export async function addNote(text: string): Promise<void>;
+
+/** Read all notes from the JSONL file in insertion order. Returns [] if no file. */
+export async function listNotes(): Promise<Note[]>;
+
+/** Resolve the store path. Honors JOT_HOME env var; defaults to ~/.jot/notes.jsonl. */
+export function getStorePath(): string;
+```
+
+**Tests baseline:**
+
+- Existing tests in scope: 0. This is greenfield.
+- Baseline command: `npx vitest run` (will be added to package.json scripts).
 
 **Risks observed:**
-- `rg` might not be installed — `jot search` must detect and give a clear error message
-- Timestamp collisions (sub-second race) — edge case, handled by append-counter if it occurs
-- PATH install is manual — user must `cp jot.py /usr/local/bin/jot` or `ln -s`; document in `--help` or README
-- Single-file might grow unwieldy — acceptable for v1; extract to module if v2 needs it
+
+- Greenfield — no adjacent code to regress against.
+- Concurrent terminal writes: JSON Lines append-only pattern eliminates corruption risk (from decision brief pre-mortem). Each `add` is one `fs.appendFile` — atomic for writes under the OS buffer size (default 4KB+).
+- The only real risk is the `~/.jot/` directory not being writable, or the file growing unboundedly. Both are acceptable for a scratchpad tool — the user can `rm ~/.jot/notes.jsonl` to clear.
 
 ---
 
 ## 4. Design
 
-### `jot.py` (new)
+### `src/types.ts` (new)
 
-**Purpose:** The entire CLI application. Single file, executable via `python3 jot.py` or (after install) `jot`.
+**Purpose:** Shared type definitions — the single source of truth for the Note shape.
 
 **Public surface:**
 
-The file is the public surface. Entry point: `main()` function. Three subcommands via argparse, each dispatching to a private function.
+```typescript
+export interface Note {
+  text: string;
+  ts: string; // ISO 8601, e.g. "2026-05-13T14:23:00.000Z"
+}
+```
 
-```python
-#!/usr/bin/env python3
-"""jot — quick notes from the command line. Store notes in ~/.jot/notes/."""
+**Key internals:** None — pure type file.
 
-import argparse
-import datetime
-import os
-import re
-import shutil
-import subprocess
-import sys
-import textwrap
-from pathlib import Path
+---
 
-JOT_DIR = Path.home() / ".jot"
-NOTES_DIR = JOT_DIR / "notes"
-ATTACHMENTS_DIR = JOT_DIR / "attachments"
-MAX_SLUG_LENGTH = 60
+### `src/store.ts` (new)
 
-# --- helpers ---
+**Purpose:** Read and write the JSON Lines note file. All file I/O lives here; rest of the tool never touches `fs` directly.
 
-def ensure_dirs():
-    ...
+**Public surface:**
 
-def generate_slug(text: str) -> str:
-    """'remember this thing' → 'remember-this-thing'"""
-    ...
+```typescript
+import { Note } from './types';
 
-def generate_filename(text: str, ts: datetime.datetime) -> str:
-    """→ '2026-05-12-230500-remember-this-thing.md'"""
-    ...
-
-def extract_heading(filepath: Path) -> str:
-    """Read first # heading from a markdown file."""
-    ...
-
-def format_list_entry(filepath: Path) -> str:
-    """→ '2026-05-12 23:05:00    remember-this-thing'"""
-    ...
-
-# --- commands ---
-
-def cmd_add(args):
-    """If args.text, use it; otherwise read stdin."""
-    ...
-
-def cmd_list(args):
-    """List NOTES_DIR/*.md sorted reverse, first args.count entries."""
-    ...
-
-def cmd_search(args):
-    """Shell out to rg. If --tag, search '#tagname'. Otherwise pass query through."""
-    ...
-
-# --- entry point ---
-
-def build_parser() -> argparse.ArgumentParser:
-    ...
-
-def main():
-    ...
+export async function addNote(text: string): Promise<void>;
+export async function listNotes(): Promise<Note[]>;
+export function getStorePath(): string;
 ```
 
 **Key internals:**
 
-- **`ensure_dirs()`** — creates `NOTES_DIR` and `ATTACHMENTS_DIR` with `parents=True, exist_ok=True`. Called at the top of every command. Idempotent.
-- **`generate_slug()`** — takes first ~5 words, lowercases, strips non-alphanumeric (keeps hyphens), collapses multiple hyphens into one, strips leading/trailing hyphens, truncates to `MAX_SLUG_LENGTH`. If text is empty, slug is `note`.
-- **`generate_filename()`** — `f"{ts:%Y-%m-%d-%H%M%S}-{slug}.md"`. If filename collision (unlikely at second precision), append `-2`, `-3`, etc. until unique.
-- **`extract_heading()`** — opens file, reads lines until finds one starting with `# `, returns it without the `# ` prefix (stripped). Returns first non-empty line if no `# ` heading found.
-- **`format_list_entry()`** — parses timestamp from filename prefix, calls `extract_heading()`, formats as `YYYY-MM-DD HH:MM:SS    heading`. Tab between timestamp and heading for easy column alignment.
-- **`cmd_add()`** — if `args.text` is non-empty, use it as content (join with space if multiple positional args). Otherwise, read `sys.stdin.read()`. Split content on first newline: first line → heading, rest → body. Write `# heading\n\nbody` (omit `\n\nbody` if no body). Print created file path.
-- **`cmd_list()`** — `sorted(NOTES_DIR.glob("*.md"), reverse=True)[:args.count]`. For each, print `format_list_entry()`.
-- **`cmd_search()`** — build `rg` args. If `args.tag`: `['rg', f'#{args.tag}', str(NOTES_DIR)]`. Otherwise: `['rg', args.query, str(NOTES_DIR)]`. Also pass through `args.rg_args` if provided (to allow `-i`, `-C`, etc.). Use `subprocess.run()`. If `rg` not found (`FileNotFoundError`), print clear error and exit 1. Forward `rg`'s exit code.
+- `getStorePath()` reads `process.env.JOT_HOME` — if set, uses `path.join(JOT_HOME, 'notes.jsonl')`. Otherwise defaults to `path.join(os.homedir(), '.jot', 'notes.jsonl')`. Does NOT create the directory (that's done in `addNote`).
+- `addNote(text)`:
+  1. Calls `getStorePath()`, creates directory via `fs.mkdir(dirname(path), { recursive: true })`.
+  2. Builds a `Note` object: `{ text, ts: new Date().toISOString() }`.
+  3. Appends `JSON.stringify(note) + '\n'` via `fs.appendFile(path, line, 'utf-8')`.
+  4. Does NOT catch errors — lets them propagate to the CLI handler. The CLI catches and prints to stderr.
+- `listNotes()`:
+  1. Calls `getStorePath()`.
+  2. Checks if file exists via `fs.access()`. If absent, returns `[]`.
+  3. Reads entire file via `fs.readFile(path, 'utf-8')`.
+  4. Splits on `'\n'`, filters empty lines (last line is often empty if file ends with newline).
+  5. Parses each line as `JSON.parse(line)` and casts to `Note`. If a line fails to parse, it's skipped silently (resilience against partial/corrupt writes — though append-only makes this unlikely).
+  6. Returns array of `Note` objects in file order.
 
-**Parser structure:**
+**Code sketch (addNote):**
 
-```
-jot
-├── add [text ...]          # positional, nargs='*'
-├── list
-│   └── -n, --count N       # default 10
-└── search
-    ├── query               # positional
-    ├── --tag TAG           # mutually exclusive with positional query
-    └── --rg-args ...       # passthrough args to rg (nargs='*' or remaining)
-```
+```typescript
+export async function addNote(text: string): Promise<void> {
+  const filePath = getStorePath();
+  const dir = path.dirname(filePath);
+  await fs.mkdir(dir, { recursive: true });
 
-Wait — `search` needs either `query` OR `--tag`, not both. Cleanest design: make `query` positional but `nargs='?'`, and `--tag` an optional flag. If both given, `--tag` wins. If neither, error.
+  const note: Note = {
+    text,
+    ts: new Date().toISOString(),
+  };
 
-Actually, even simpler for v1: `jot search "query"` and `jot search --tag tagname`. No `--rg-args` passthrough in v1 — the user can run `rg` directly if they need flags. `jot search` is the 80% case.
-
-```python
-# Parser sketch — final:
-
-parser = argparse.ArgumentParser(description="jot — quick notes from the CLI")
-subs = parser.add_subparsers(dest="command")
-
-add_p = subs.add_parser("add", help="Add a new note")
-add_p.add_argument("text", nargs="*", help="Note text (reads from stdin if omitted)")
-add_p.set_defaults(func=cmd_add)
-
-list_p = subs.add_parser("list", help="List recent notes")
-list_p.add_argument("-n", "--count", type=int, default=10, help="Number of notes to show (default: 10)")
-list_p.set_defaults(func=cmd_list)
-
-search_p = subs.add_parser("search", help="Search notes with ripgrep")
-search_p.add_argument("query", nargs="?", default=None, help="Search query")
-search_p.add_argument("--tag", "-t", default=None, help="Search for #tag")
-search_p.set_defaults(func=cmd_search)
+  const line = JSON.stringify(note) + '\n';
+  await fs.appendFile(filePath, line, 'utf-8');
+}
 ```
 
-**Code sketch — `cmd_add`:**
+**Code sketch (listNotes):**
 
-```python
-def cmd_add(args):
-    ensure_dirs()
-    if args.text:
-        content = " ".join(args.text)
-    else:
-        if sys.stdin.isatty():
-            print("Error: no text provided and stdin is a terminal.", file=sys.stderr)
-            print("Usage: jot add 'note text'  OR  echo 'text' | jot add", file=sys.stderr)
-            sys.exit(1)
-        content = sys.stdin.read().strip()
-    
-    if not content:
-        print("Error: note text cannot be empty.", file=sys.stderr)
-        sys.exit(1)
-    
-    lines = content.split("\n", 1)
-    heading = lines[0].strip()
-    body = lines[1].strip() if len(lines) > 1 else ""
-    
-    ts = datetime.datetime.now()
-    filename = generate_filename(heading, ts)
-    filepath = NOTES_DIR / filename
-    
-    with open(filepath, "w") as f:
-        f.write(f"# {heading}\n")
-        if body:
-            f.write(f"\n{body}\n")
-    
-    print(str(filepath))
+```typescript
+export async function listNotes(): Promise<Note[]> {
+  const filePath = getStorePath();
+
+  try {
+    await fs.access(filePath);
+  } catch {
+    return [];
+  }
+
+  const content = await fs.readFile(filePath, 'utf-8');
+  const lines = content.split('\n').filter(line => line.trim() !== '');
+
+  return lines.reduce<Note[]>((notes, line) => {
+    try {
+      notes.push(JSON.parse(line) as Note);
+    } catch {
+      // Skip malformed lines silently
+    }
+    return notes;
+  }, []);
+}
 ```
 
-**Code sketch — `cmd_list`:**
+---
 
-```python
-def cmd_list(args):
-    ensure_dirs()
-    files = sorted(NOTES_DIR.glob("*.md"), reverse=True)
-    for fp in files[:args.count]:
-        print(format_list_entry(fp))
-    if not files:
-        print("No notes yet. Add one with: jot add 'your note'")
+### `src/cli.ts` (new)
+
+**Purpose:** CLI entry point. Parses argv, dispatches to commands, formats output. Shebangs to `#!/usr/bin/env node`.
+
+**Public surface:** No exports — this is the entry point. The file is executed directly.
+
+**Key internals:**
+
+```
+argv[0] = node
+argv[1] = path/to/cli.js
+argv[2] = command (add | list | undefined)
+argv[3] = argument (note text for 'add')
 ```
 
-**Code sketch — `cmd_search`:**
+Dispatch logic:
 
-```python
-def cmd_search(args):
-    ensure_dirs()
-    if args.tag:
-        pattern = f"#{args.tag}"
-    elif args.query:
-        pattern = args.query
-    else:
-        print("Error: provide a search query or --tag.", file=sys.stderr)
-        sys.exit(1)
-    
-    try:
-        subprocess.run(["rg", pattern, str(NOTES_DIR)])
-    except FileNotFoundError:
-        print("Error: 'rg' (ripgrep) not found. Install it: https://github.com/BurntSushi/ripgrep", file=sys.stderr)
-        sys.exit(1)
+```
+if argv[2] === 'add':
+  - Read note text from argv[3]. If missing, print "Usage: jot add <text>" to stderr, exit 1.
+  - Call store.addNote(text).
+  - On success: silent exit 0 (jot add is fire-and-forget).
+  - On error: print error message to stderr, exit 1.
+
+if argv[2] === 'list':
+  - Call store.listNotes().
+  - For each note, print "[HH:MM] text" to stdout.
+    - Extract HH:MM from note.ts (ISO 8601 → new Date(note.ts) → local time → toLocaleTimeString or manual padStart).
+  - If no notes, print "No notes yet." to stdout.
+  - On error: print error message to stderr, exit 1.
+
+else (unknown or no command):
+  - Print usage to stderr:
+    "Usage:
+       jot add <text>    Add a note
+       jot list          List all notes"
+  - Exit 1 if unknown command; exit 0 if no command (just `jot`).
+    - Let's be consistent: both exit 0 since it's informational usage display, not an error.
+```
+
+**Code sketch (cli.ts):**
+
+```typescript
+#!/usr/bin/env node
+
+import { addNote, listNotes } from './store';
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  const command = args[0];
+  const text = args[1];
+
+  switch (command) {
+    case 'add': {
+      if (!text) {
+        console.error('Usage: jot add <text>');
+        process.exit(1);
+      }
+      try {
+        await addNote(text);
+      } catch (err) {
+        console.error('Error adding note:', (err as Error).message);
+        process.exit(1);
+      }
+      break;
+    }
+    case 'list': {
+      try {
+        const notes = await listNotes();
+        if (notes.length === 0) {
+          console.log('No notes yet.');
+        } else {
+          for (const note of notes) {
+            const d = new Date(note.ts);
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mm = String(d.getMinutes()).padStart(2, '0');
+            console.log(`[${hh}:${mm}] ${note.text}`);
+          }
+        }
+      } catch (err) {
+        console.error('Error listing notes:', (err as Error).message);
+        process.exit(1);
+      }
+      break;
+    }
+    default: {
+      console.error('Usage:');
+      console.error('  jot add <text>    Add a note');
+      console.error('  jot list          List all notes');
+      process.exit(command ? 1 : 0);
+    }
+  }
+}
+
+main();
+```
+
+---
+
+### `package.json` (new)
+
+**Purpose:** Project metadata, scripts, binary declaration.
+
+Key fields:
+
+```json
+{
+  "name": "jot",
+  "version": "1.0.0",
+  "description": "Quick terminal notes",
+  "bin": {
+    "jot": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5",
+    "vitest": "^1",
+    "tsx": "^4"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
+```
+
+Note: `tsx` is a devDependency used for running integration tests against the TypeScript source directly (no pre-build needed for tests). Runtime has zero dependencies.
+
+---
+
+### `tsconfig.json` (new)
+
+**Purpose:** TypeScript compilation config — strict mode, output to `dist/`.
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022"],
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "moduleResolution": "node"
+  },
+  "include": ["src"],
+  "exclude": ["tests", "dist"]
+}
 ```
 
 ---
 
 ## 5. Test plan
 
-Tests use `unittest` (stdlib). Test isolation via `tempfile.TemporaryDirectory` for filesystem tests — no global `~/.jot/` pollution. The `JOT_DIR` / `NOTES_DIR` / `ATTACHMENTS_DIR` constants are monkeypatched in test setup to point at a temp directory.
-
 | Test name | Level | File | Assertion |
 |---|---|---|---|
-| `test_ensure_dirs_creates_directories` | unit | `tests/test_jot.py` | After call with temp path, both `notes/` and `attachments/` subdirs exist |
-| `test_ensure_dirs_idempotent` | unit | same | Calling twice doesn't raise; dirs still exist |
-| `test_generate_slug_basic` | unit | same | `"remember this thing"` → `"remember-this-thing"` |
-| `test_generate_slug_truncates` | unit | same | Very long text → slug ≤ 60 chars |
-| `test_generate_slug_strips_special_chars` | unit | same | `"hello! @world #123"` → `"hello-world-123"` |
-| `test_generate_slug_empty_fallback` | unit | same | `""` → `"note"` |
-| `test_generate_slug_unicode` | unit | same | `"café résumé"` → `"café-résumé"` (Python handles unicode) |
-| `test_generate_filename_format` | unit | same | Given heading `"hi"` and datetime(2026,5,12,23,5,0) → `"2026-05-12-230500-hi.md"` |
-| `test_generate_filename_collision` | unit | same | When file exists, append `-2` before `.md`; check until unique |
-| `test_extract_heading_from_file` | unit | same | File with `# Hello\n\nworld` → `"Hello"` |
-| `test_extract_heading_no_heading_fallback` | unit | same | File with no `#` line → first non-empty line |
-| `test_format_list_entry` | unit | same | File named `2026-05-12-230500-hi.md` with heading `"hi"` → `"2026-05-12 23:05:00    hi"` |
-| `test_add_creates_note_file` | integration | same | `cmd_add` with text `"hello world"` → file exists at expected path with `# hello world` content |
-| `test_add_from_stdin` | integration | same | Pipe `"stdin note"` via `sys.stdin` → file created with heading `"stdin note"` |
-| `test_add_multiline` | integration | same | `"line1\nline2\nline3"` → heading `"line1"`, body `"line2\nline3"` |
-| `test_add_empty_errors` | unit | same | `cmd_add` with empty text → `SystemExit(1)` |
-| `test_add_stdin_tty_errors` | unit | same | `sys.stdin.isatty()` returns True, no text → `SystemExit(1)` |
-| `test_list_shows_recent` | integration | same | Pre-create 3 note files → `cmd_list` output has 3 lines, newest first |
-| `test_list_respects_count` | integration | same | Pre-create 20 notes, `args.count=5` → output has 5 lines |
-| `test_list_empty_shows_message` | integration | same | Empty notes dir → output contains "No notes yet" |
-| `test_search_calls_rg` | unit | same | Mock `subprocess.run`; assert called with `["rg", "query", str(NOTES_DIR)]` |
-| `test_search_tag_calls_rg` | unit | same | `args.tag="meeting"` → assert called with `["rg", "#meeting", str(NOTES_DIR)]` |
-| `test_search_no_rg_errors` | unit | same | Mock `subprocess.run` to raise `FileNotFoundError` → `SystemExit(1)` |
-| `test_search_no_query_errors` | unit | same | Neither `query` nor `tag` given → `SystemExit(1)` |
-| `test_full_add_then_list` | integration | same | Add note via `cmd_add`, then `cmd_list` → note appears in output |
+| `adds_note_to_file` | unit | `tests/store.test.ts` | Add one note with text "hello", then listNotes returns exactly `[{ text: "hello", ts: <ISO string> }]`. |
+| `lists_multiple_notes_in_order` | unit | `tests/store.test.ts` | Add "a", "b", "c". listNotes returns 3 notes in insertion order with matching text. |
+| `lists_empty_array_when_no_file` | unit | `tests/store.test.ts` | On a clean temp dir (no prior notes file), listNotes returns `[]`. |
+| `handles_unicode_text` | unit | `tests/store.test.ts` | Add text `"café 你好 🎉"`. listNotes returns the exact string including multi-byte chars and emoji. |
+| `handles_empty_text` | unit | `tests/store.test.ts` | Add `""`. listNotes returns `[{ text: "", ts: <ISO> }]`. |
+| `handles_newlines_in_text` | unit | `tests/store.test.ts` | Add text containing `\n`. Read back — text is preserved (JSON serialization escapes the newline so JSONL line integrity holds). |
+| `getStorePath_respects_JOT_HOME` | unit | `tests/store.test.ts` | Set `process.env.JOT_HOME = '/tmp/test-jot'`; getStorePath returns `/tmp/test-jot/notes.jsonl`. Restore env after test. |
+| `add_command_writes_note_and_exits_0` | integration | `tests/cli.test.ts` | Spawn `npx tsx src/cli.ts add "hello"` with `JOT_HOME=<temp>`. File at `<temp>/notes.jsonl` contains one JSON line with text "hello". Exit code 0. |
+| `list_command_prints_formatted_notes` | integration | `tests/cli.test.ts` | Prepopulate `notes.jsonl` with two entries. Spawn `npx tsx src/cli.ts list` with `JOT_HOME=<temp>`. Stdout contains `[HH:MM] text` for both entries. Exit code 0. |
+| `list_prints_placeholder_when_empty` | integration | `tests/cli.test.ts` | No file. Spawn `jot list`. Stdout contains "No notes yet." |
+| `add_missing_text_shows_usage` | integration | `tests/cli.test.ts` | Spawn `jot add` (no text arg). Stderr contains "Usage". Exit code 1. |
+| `unknown_command_shows_usage` | integration | `tests/cli.test.ts` | Spawn `jot unknown`. Stderr contains "Usage". Exit code 1. |
+| `no_command_shows_usage_exits_0` | integration | `tests/cli.test.ts` | Spawn `jot` (no args). Stderr contains "Usage". Exit code 0. |
 
 **Edge cases acknowledged (covered by named tests above):**
 
-- Empty notes directory (`test_list_empty`)
-- Empty input (`test_add_empty`)
-- Unicode in content (`test_generate_slug_unicode`, Python handles unicode natively in files)
-- Filename collision (`test_generate_filename_collision`)
-- Multi-line input from stdin (`test_add_multiline`)
-- `rg` not installed (`test_search_no_rg`)
+- Empty note text — covered by `handles_empty_text`
+- Unicode / emoji — covered by `handles_unicode_text`
+- Newlines in text — covered by `handles_newlines_in_text`
+- Missing `~/.jot/` directory — handled by `mkdir` in `addNote`; `listNotes` returns `[]` if dir doesn't exist
+- Corrupt JSON line — silently skipped in `listNotes` (tested implicitly by the type system; malformed lines fail `JSON.parse`, caught by try/catch)
+- Concurrent writes — JSONL append-only handles this at the design level; not tested directly (would require OS-level process spawning with timing, over-scope for this tool)
+- Very large note file — not tested (scratchpad use case; user manually clears); no pagination needed
 
 **Mocks (and what's deliberately not mocked):**
 
-- Mock: `subprocess.run` in search tests — we're testing arg construction, not `rg` itself
-- Mock: `sys.stdin` in add-stdin tests — we control the input stream
-- Not mocked (deliberately): filesystem operations — tests use `tempfile.TemporaryDirectory` which is fast and real; mocking `open()` / `Path` would test the mock, not the behavior
+- Mock: `process.env.JOT_HOME` — temporarily set during tests to point to a temp directory. Each test gets a fresh temp dir via `fs.mkdtemp` (unit) or `os.tmpdir` + random subdir (integration). Cleaned up in `afterEach`.
+- Not mocked (deliberately): `fs` module — we use the real filesystem to verify actual JSONL behavior. Temp directories make this cheap and isolated.
+- Not mocked (deliberately): `Date` — we assert that `note.ts` is an ISO string; exact timestamp values aren't asserted (would be flaky).
 
 **TDD discipline:**
 
-- [x] Tests for pure helpers (`generate_slug`, `generate_filename`, `extract_heading`, `format_list_entry`) are specified to be written test-first — they're pure I/O-free functions.
-- [ ] For bug fixes: not applicable (initial implementation).
+- [x] Tests specified test-first: store unit tests should be written and seen failing (file doesn't exist) before implementing `src/store.ts`.
+- [x] Integration tests should fail (no binary, no module) before `src/cli.ts` exists.
+- N/A — no bug fix, this is greenfield.
 
 **Baseline:**
 
-- No existing tests.
-- New tests added: +26.
-- Coverage expectation: all functions in `jot.py` exercised; command entry points covered via integration tests with temp dirs.
+- Existing tests: 0. Greenfield.
+- New tests added: +13 (7 unit + 6 integration).
+- Coverage expectation: 100% of `src/` modules. No uncovered branches in store.ts or cli.ts.
 
 ---
 
@@ -347,24 +413,25 @@ Tests use `unittest` (stdlib). Test isolation via `tempfile.TemporaryDirectory` 
 
 **Dependencies:**
 
-- Add: **none** — Python stdlib only.
-- Remove: n/a.
-- Bump: n/a.
+- Add: none (runtime). The tool ships zero runtime dependencies.
+- Dev add: `typescript@^5`, `@types/node@^20`, `vitest@^1`, `tsx@^4` — standard TypeScript dev toolchain, MIT licensed, well-maintained.
+- Remove: none.
+- Bump: none.
 
-**Affected callers:** n/a (greenfield; no existing code to break).
+**Affected callers:** N/A — greenfield, no existing callers.
 
-**Deleted / renamed exports:** none.
+**Deleted / renamed exports:** N/A — greenfield.
 
 **Side effects:**
 
-- New IO: reads/writes to `~/.jot/notes/*.md` (filesystem); reads stdin in add mode; shells out to `rg` in search mode.
-- New logs: none (prints to stdout for results, stderr for errors — standard CLI).
-- New env vars / config: none. `JOT_DIR` is hardcoded to `~/.jot/`.
-- New metrics: none.
-- New background jobs: none.
-- Schema / data layout changes: n/a (initial creation).
+- New IO: Writes to `~/.jot/notes.jsonl` (or `$JOT_HOME/notes.jsonl`). ~/.jot/ directory created if absent.
+- New logs: None (stdout for list output, stderr for errors/usage).
+- New env vars / config: `JOT_HOME` — optional override for storage directory, defaults to `~/.jot`.
+- New metrics: None.
+- New background jobs: None.
+- Schema / data layout changes: N/A — greenfield.
 
-**Migration plan:** n/a (initial implementation; no existing data).
+**Migration plan:** N/A — greenfield.
 
 ---
 
@@ -372,77 +439,74 @@ Tests use `unittest` (stdlib). Test isolation via `tempfile.TemporaryDirectory` 
 
 | Decision | Tag | Rationale | Kill criterion (🔴 only) |
 |---|---|---|---|
-| Python 3 as implementation language | 🟡 | Zero-deps goal met; changing language later means rewrite, but no data migration | — |
-| Single file `jot.py` architecture | 🟢 | Extract to package later is trivial; import paths change but no behavior change | — |
-| `~/.jot/notes/` + `~/.jot/attachments/` layout | 🟢 | Flatten to single dir later is a one-line `mv`; migrate to DB is a migration script | — |
-| `YYYY-MM-DD-HHMMSS-slug.md` filename format | 🟡 | Renaming files later requires a migration script; data is preserved in content | — |
-| `# heading` as first line (no YAML frontmatter) | 🟢 | Adding YAML later is backward-compatible — new files get YAML; old files don't break | — |
-| `rg` as search backend | 🟢 | Swap to `grep`, `ag`, or custom search later; just change the `subprocess.run` call | — |
-| Tab-separated list output (not JSON) | 🟢 | Change output format later — no data migration needed | — |
-| No `jot edit` / `jot delete` in v1 | 🟢 | Add commands later — additive, no reversal cost | — |
+| JSON Lines format (`Note { text, ts }`) | 🟢 | Adding fields is backward-compatible (new fields on new writes; old reads skip unknown). Removing fields would require ignoring them in read path — also fine. Format is append-only so corruption is near-impossible. | — |
+| Storage path `~/.jot/` | 🟡 | Changing the path later orphanes existing notes. But users can `mv ~/.jot ~/.new-jot` and set `JOT_HOME`. Not a data loss risk. | — |
+| Global install via npm `bin` field | 🟢 | Trivial to switch to a different distribution method (npx, shell wrapper, brew tap). The compiled JS is independent of npm after install. | — |
+| Zero runtime dependencies | 🟢 | Adding a dependency later is a single `npm install`. Removing is `npm uninstall` + code change. | — |
+| No CLI framework (manual argv parsing) | 🟢 | If commands grow beyond 3-4, add `commander` or `yargs`. Switching is a cli.ts rewrite — contained to one file. | — |
+| Node >= 18 engine requirement | 🟡 | Bumping the engine later requires all users to upgrade Node. Backward-compatible unless we start using Node 20+ APIs. | — |
 
 ---
 
 ## 8. Smell-check
 
-Approach: a clean single-file Python CLI with no external dependencies matches the "minimal personal tool" constraint perfectly — no `pip install`, no `package.json`, no build step. Smaller alternative considered (shell alias/function) — rejected in the decision brief because it couldn't handle the heterogeneous content or attachments. No duplicate utility exists (greenfield). Underlying problem (capture friction) is addressed directly: `jot add "text"` is ~15 keystrokes, sub-second execution, no app to open, no structure to fight. Sizing fits one slice well — ~200 lines of Python, one test file, no ripples into existing code. Follow-up surfaced: if this grows, extract helpers into a `jot/` package and add `pyproject.toml`; if search gets painful, add an SQLite index that references file paths (per the pre-mortem fallback plan).
+Smell-check: greenfield project — no existing codebase to fight, no conventions to match, no utilities to accidentally re-implement. The approach is deliberately minimal: one type file, one I/O module, one CLI entry point. Considered a single-file script (Option 2 from the decision brief) — rejected because the user explicitly chose the multi-file structure with tests. Considered using `commander` for CLI parsing — rejected because with exactly two commands, the dependency is heavier than the problem it solves; manual `switch` on `process.argv[2]` is 15 lines and fully transparent. No underlying-problem concern: the user's actual pain point (losing terminal notes) is directly addressed by persistent file storage. Sizing fits one slice perfectly — 3 source files, 2 test files, ~200 lines of implementation code.
 
 ---
 
 ## 9. Flagged assumptions
 
-- ASSUMES: `rg` is installed and in PATH. If wrong: `jot search` prints a clear error; user must install ripgrep.
-- ASSUMES: User will install `jot.py` by copying/symlinking to a directory in PATH (e.g., `cp jot.py /usr/local/bin/jot`). If wrong: they run `python3 jot.py` instead — works identically.
-- ASSUMES: `~/.jot/` is writable and has reasonable disk space. If wrong: Python will raise `OSError` / `PermissionError` on file write; catch and surface as user error in the coder's implementation (this is a standard Python filesystem error, no special handling needed in v1).
-- ASSUMES: Notes are short enough that reading the first line for heading extraction is fast (no multi-megabyte markdown files). If wrong: `cmd_list` slows down. Coder should use `open()` and read only first few lines (not whole file).
-- ASSUMES: Python 3.9+ available (uses `argparse` subparsers with `set_defaults(func=...)` pattern, which works in all modern Pythons). Confirmed: user has Python 3.12.3.
+- ASSUMES: `os.homedir()` returns a writable directory on the user's machine. If wrong: `mkdir` in `addNote` will throw — CLI catches and prints the error. The user gets a clear failure message. No spec change needed; this is a runtime error the code already handles.
+- ASSUMES: `fs.appendFile` with a single JSON line + `\n` is atomic on the target OS (true for writes under the OS buffer size, which a single note line is — well under 4KB). If wrong (e.g., exotic filesystem): partial writes could produce malformed lines, which `listNotes` skips silently. The design degrades gracefully. No spec change needed.
+- ASSUMES: Node.js `>=18` is available on the user's machine. If wrong: `tsc` compilation will fail on ES2022 target. Downgrade `target` to `ES2020` and `lib` accordingly. Minor tsconfig change, coder can handle without spec update.
 
 ---
 
 ## 10. Handoff baton → coder
 
-**Spec:** `/home/alavanja/prepos/jot-demo-deep/coding-spec-jot.md` (this document)
+**Spec:** `coding-spec-jot.md` (this file, at repo root alongside `decision-brief-jot.md`).
 
-**Outcome (one-liner):** A zero-dependency Python CLI at `jot.py` with `add`, `list`, `search` subcommands storing notes as markdown files in `~/.jot/notes/`.
+**Outcome:** `jot add "text"` appends a timestamped note; `jot list` prints all notes as `[HH:MM] text`. Global install, zero runtime deps, full test coverage.
 
-**First concrete action:** Create `jot.py` with the shebang, module docstring, imports, and constant definitions from §4. Confirm the file runs (`python3 jot.py --help` exits 0). Then add the helper functions (`ensure_dirs`, `generate_slug`, `generate_filename`, `extract_heading`, `format_list_entry`) as the first commit.
+**First concrete action:** Initialize the project scaffold — create `package.json`, `tsconfig.json` per spec §4, run `npm install`, and confirm `npx tsc --noEmit` exits 0 (no source files yet, so it'll pass vacuously — first real check is after writing `src/types.ts`). Then write `src/types.ts` (the minimal file — one interface).
 
 **Reconfirm before coding:**
 
-- [ ] `rg` 15.1.0 is at `/home/alavanja/.pi/agent/bin/rg` — verify with `which rg`. If not found, still implement; search will error gracefully at runtime.
-- [ ] `python3` is 3.12.3 at `/usr/bin/python3` — verify with `python3 --version`. The spec targets 3.9+.
-- [ ] `tests/` directory doesn't exist yet — create it with `__init__.py`.
+- [ ] `npx tsc --version` shows TypeScript 5.x — verified as available.
+- [ ] `node --version` shows >= 18 — verified as available.
+- [ ] `os.homedir()` returns a path on this machine — quick `node -e "console.log(require('os').homedir())"` to confirm.
+- [ ] No existing `~/.jot/` directory with important data — if it exists, warn but proceed (the tool only appends, won't overwrite).
 
 **Acceptance signal:**
 
-1. `python3 -m unittest discover tests` exits 0 (all 26 tests pass).
-2. `python3 jot.py --help` exits 0 and shows usage.
-3. `python3 jot.py add "test note from spec"` creates `~/.jot/notes/<timestamp>-test-note-from-spec.md` with `# test note from spec` inside.
-4. `python3 jot.py list` shows the note just added.
-5. `python3 jot.py search "test note"` finds it (via rg).
-6. `python3 jot.py search --tag test` finds it (if you add `#test` to the note — or test with a known tag).
+1. `npx vitest run` exits 0 (13 tests pass).
+2. `npx tsc --noEmit` exits 0 (no type errors).
+3. Manual smoke test:
+   - `npm run build && node dist/cli.js add "test note"` — exits 0.
+   - `node dist/cli.js list` — prints `[HH:MM] test note`.
+   - `node dist/cli.js add ""` — exits 0 (empty text allowed).
+   - `node dist/cli.js list` — prints both notes.
+   - `rm ~/.jot/notes.jsonl` (clean up after manual test).
+4. Global install test: `npm install -g .` from repo root, then `jot add "global test" && jot list` in a different directory — confirms binary resolution. Then `npm uninstall -g jot`.
 
 **Stop conditions (pause and return to tech-lead):**
 
-- Any flagged assumption above is wrong and affects the design (e.g., a Python version <3.9).
-- The test plan reveals a behavior gap requiring more than a one-line addition.
-- A convention conflict surfaces (unlikely for greenfield, but if the user has preferences).
-- `unittest` discovery can't find tests — suggests packaging issue that needs resolution.
+- An assumption above is wrong (e.g., Node < 18 — spec may need target/library adjustment).
+- The test strategy reveals a gap — e.g., temp dir cleanup isn't reliable on this OS, needing a different isolation approach.
+- Integration tests fail intermittently due to timing/spawn issues — needs test design adjustment.
+- The user decides mid-implementation they want a feature from the "out of scope" list — pause and update spec.
 
 **Commit hygiene:**
 
-- Conventional commits: `feat(jot): ...`, `test(jot): ...`
-- Small commits, one per logical step:
-  1. `feat(jot): scaffold jot.py with imports and constants`
-  2. `feat(jot): add helper functions (ensure_dirs, generate_slug, generate_filename, extract_heading, format_list_entry)`
-  3. `test(jot): add unit tests for all helpers`
-  4. `feat(jot): add 'jot add' command`
-  5. `test(jot): add integration tests for jot add`
-  6. `feat(jot): add 'jot list' command`
-  7. `test(jot): add tests for jot list`
-  8. `feat(jot): add 'jot search' command`
-  9. `test(jot): add tests for jot search`
-  10. `feat(jot): add main entry point and argparse wiring`
+- Conventional commits: `feat:`, `test:`, `chore:`.
+- Small commits — one per logical step:
+  1. `chore: initialize project scaffold` — package.json, tsconfig.json, npm install
+  2. `feat: add Note type`
+  3. `feat: implement store module (addNote, listNotes)`
+  4. `test: add store unit tests`
+  5. `feat: implement CLI entry point`
+  6. `test: add CLI integration tests`
+  7. `chore: final adjustments and README` (if time)
 - Write a progress note to `progress.md` after each commit.
 - Hand the resulting branch to `project-git` for PR once acceptance signal is green.
 
@@ -452,4 +516,4 @@ Approach: a clean single-file Python CLI with no external dependencies matches t
 
 | Date | Version | Change | Author |
 |---|---|---|---|
-| 2026-05-12 | v1 | Initial draft — jot v1 CLI spec | tech-lead |
+| 2026-05-13 | v1 | Initial draft | tech-lead |
