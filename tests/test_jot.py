@@ -151,5 +151,74 @@ class FormatListEntryTests(unittest.TestCase):
         self.assertIn("(unknown date)", result)
 
 
+class CmdAddTests(unittest.TestCase):
+    """Integration tests for cmd_add()."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmpdir.name)
+        self.notes = self.tmp_path / "notes"
+        self.attachments = self.tmp_path / "attachments"
+        self.notes.mkdir(parents=True, exist_ok=True)
+        self.attachments.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def _args(self, text=None):
+        """Build a fake argparse namespace for cmd_add."""
+        class FakeArgs:
+            pass
+        a = FakeArgs()
+        a.text = text if text is not None else []
+        return a
+
+    def test_add_creates_note_file(self):
+        with patch("jot.NOTES_DIR", self.notes), patch("jot.ATTACHMENTS_DIR", self.attachments):
+            jot.cmd_add(self._args(["hello world"]))
+
+        files = sorted(self.notes.glob("*.md"))
+        self.assertEqual(len(files), 1)
+        content = files[0].read_text()
+        self.assertIn("# hello world", content)
+
+    def test_add_from_stdin(self):
+        fake_stdin = io.StringIO("stdin note\n")
+        with patch("jot.NOTES_DIR", self.notes), \
+             patch("jot.ATTACHMENTS_DIR", self.attachments), \
+             patch("sys.stdin", fake_stdin):
+            jot.cmd_add(self._args([]))
+
+        files = sorted(self.notes.glob("*.md"))
+        self.assertEqual(len(files), 1)
+        content = files[0].read_text()
+        self.assertIn("# stdin note", content)
+
+    def test_add_multiline(self):
+        with patch("jot.NOTES_DIR", self.notes), patch("jot.ATTACHMENTS_DIR", self.attachments):
+            jot.cmd_add(self._args(["line1\n", "line2\n", "line3"]))
+
+        files = sorted(self.notes.glob("*.md"))
+        self.assertEqual(len(files), 1)
+        content = files[0].read_text()
+        self.assertIn("# line1", content)
+        self.assertIn("line2", content)
+        self.assertIn("line3", content)
+
+    def test_add_empty_errors(self):
+        with patch("jot.NOTES_DIR", self.notes), patch("jot.ATTACHMENTS_DIR", self.attachments):
+            with self.assertRaises(SystemExit) as cm:
+                jot.cmd_add(self._args([]))
+            self.assertEqual(cm.exception.code, 1)
+
+    def test_add_stdin_tty_errors(self):
+        with patch("jot.NOTES_DIR", self.notes), \
+             patch("jot.ATTACHMENTS_DIR", self.attachments), \
+             patch("sys.stdin.isatty", return_value=True):
+            with self.assertRaises(SystemExit) as cm:
+                jot.cmd_add(self._args([]))
+            self.assertEqual(cm.exception.code, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
